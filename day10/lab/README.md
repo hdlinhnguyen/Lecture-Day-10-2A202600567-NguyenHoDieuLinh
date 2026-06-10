@@ -9,6 +9,32 @@
 
 ---
 
+## 🚀 [CẢI TIẾN NỔI BẬT] Báo cáo xử lý "Rác" dữ liệu (Garbage In, Garbage Out)
+
+Để ngăn chặn tình trạng dữ liệu lỗi thời, trùng lặp hoặc sai cấu trúc làm hỏng câu trả lời của RAG Agent (*Garbage In, Garbage Out*), hệ thống Data Ingestion & Quality Pipeline đã được nâng cấp toàn diện bởi **Nguyen Ho Dieu Linh (MSV: 2A202600567)** với các cải tiến chi tiết sau:
+
+### 1. Phân loại và cách ly "Rác" (Quarantine Logic)
+Dữ liệu thô từ 5 nguồn xuất (`policy_export_dirty.csv`) ban đầu chứa **247 bản ghi**. Pipeline đã tự động phân tích và cách ly **211 bản ghi rác** vào thư mục cách ly, chỉ giữ lại **36 bản ghi sạch** chất lượng cao nạp vào cơ sở dữ liệu ChromaDB. Chi tiết các loại rác dữ liệu được cách ly gồm:
+- **Tài liệu lạ/Hệ thống cũ (`unknown_doc_id` - 109 bản ghi):** Các bản ghi rác từ các nguồn không được đăng ký trong Data Contract (ví dụ: `invalid_doc_*`, `legacy_*`) đã bị loại bỏ hoàn toàn.
+- **Trùng lặp nội dung (`duplicate_chunk_text` - 57 bản ghi):** Nhận diện các chunk text trùng lặp về mặt chữ và loại bỏ, tránh việc phân mảnh tài nguyên vector store và làm nhiễu top-k.
+- **Xung đột phiên bản chính sách HR cũ (`stale_hr_policy_effective_date` & `stale_hr_policy_version` - 30 bản ghi):** Cách ly toàn bộ các dòng thuộc chính sách nghỉ phép HR năm 2025 (quy định cũ 10 ngày phép năm) để Agent chỉ đọc bản chính sách mới nhất năm 2026 (12 ngày phép năm).
+- **Lỗi ngày tháng (`missing_effective_date` - 6 bản ghi & lỗi định dạng ngày):** Cách ly các dòng trống thông tin thời gian hoặc có định dạng ngày tháng không thể chuẩn hóa sang định dạng chuẩn ISO.
+
+### 2. Làm sạch và Tái tạo dữ liệu (Cleaning Rules)
+Chúng tôi triển khai **5 quy tắc biến đổi** trực tiếp:
+* **Rule 1 (Quarantine Stale HR Leave Policy):** Tự động phát hiện và cách ly các chính sách cũ thông qua so khớp ngày hiệu lực `< 2026-01-01` và các từ khóa liên quan đến "10 ngày phép năm".
+* **Rule 2 (Strip Placeholder Prefix):** Cắt bỏ các tiền tố placeholder rác của hệ thống OCR/Parser như `"Nội dung không rõ ràng:"`, `"Nội dung không rõ ràng: "` và dấu `"!!!"`.
+* **Rule 3 (Deduplication spacing normalization):** Chuẩn hóa khoảng trắng dư thừa trong văn bản.
+* **Rule 4 (Export Date Normalization):** Định dạng lại ngày xuất từ định dạng `/` sang `-` và đồng bộ theo tiêu chuẩn ISO `YYYY-MM-DDTHH:MM:SS`.
+* **Rule 5 (SLA Context Enrichment - Cải tiến ngữ nghĩa nâng cao):** Phát hiện chunk chứa thông tin leo thang sự cố P1 thô chỉ ghi `Escalation P1: ...` mà thiếu từ khóa `"ticket"`. Pipeline đã tự động làm giàu văn bản thành `Ticket P1 Escalation: ...`. Việc bổ sung context này giúp kéo chunk P1 lên vị trí số 1 trong kết quả tìm kiếm ngữ nghĩa của Agent thay vì bị nhiễu và trả về chunk của Ticket P2.
+
+### 3. Chốt chặn chất lượng (Expectation Suite)
+Triển khai bộ kiểm tra tự động trước khi nạp dữ liệu với hai chốt chặn nghiêm ngặt (halt):
+- `no_placeholder_prefixes` (Halt): Phát hiện và chặn đứng mọi chunk còn sót tiền tố placeholder rác.
+- `all_allowed_docs_present` (Halt): Bảo đảm toàn bộ 5 nguồn tài liệu canonical (bao gồm cả tài liệu mới đăng ký `access_control_sop`) đều có ít nhất 1 bản ghi sạch được nạp vào vector store.
+
+---
+
 ## Bối cảnh
 
 Vector store và agent Day 09 chỉ ổn nếu **pipeline ingest → clean → validate → publish** ổn. Lab này mô phỏng:

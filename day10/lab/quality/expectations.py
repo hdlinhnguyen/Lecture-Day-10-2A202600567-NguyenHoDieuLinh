@@ -112,5 +112,37 @@ def run_expectations(cleaned_rows: List[Dict[str, Any]]) -> Tuple[List[Expectati
         )
     )
 
+    # E7: no_placeholder_prefixes (severity halt)
+    bad_prefixes = [
+        r
+        for r in cleaned_rows
+        if "Nội dung không rõ ràng" in (r.get("chunk_text") or "")
+        or (r.get("chunk_text") or "").startswith("!!!")
+    ]
+    ok7 = len(bad_prefixes) == 0
+    results.append(
+        ExpectationResult(
+            "no_placeholder_prefixes",
+            ok7,
+            "halt",
+            f"placeholder_prefix_violations={len(bad_prefixes)}",
+        )
+    )
+
+    # E8: all_allowed_docs_present (severity halt)
+    from transform.cleaning_rules import ALLOWED_DOC_IDS
+    present_docs = {r.get("doc_id") for r in cleaned_rows}
+    missing_docs = ALLOWED_DOC_IDS - present_docs
+    ok8 = len(missing_docs) == 0
+    results.append(
+        ExpectationResult(
+            "all_allowed_docs_present",
+            ok8,
+            "halt",
+            f"missing_docs={list(missing_docs)}",
+        )
+    )
+
     halt = any(not r.passed and r.severity == "halt" for r in results)
     return results, halt
+

@@ -1,10 +1,9 @@
 # Báo Cáo Cá Nhân — Lab Day 10: Data Pipeline & Observability
 
-**Họ và tên:** ___________  
-**Vai trò:** Ingestion / Cleaning / Embed / Monitoring — ___________  
-**Ngày nộp:** ___________  
-**Độ dài yêu cầu:** **400–650 từ** (ngắn hơn Day 09 vì rubric slide cá nhân ~10% — vẫn phải đủ bằng chứng)
-
+**Họ và tên:**  
+**Vai trò:** Ingestion / Cleaning / Embed / Monitoring — All in one   
+**Ngày nộp:** 
+**Độ dài yêu cầu:** **400–650 từ** 
 ---
 
 > Viết **"tôi"**, đính kèm **run_id**, **tên file**, **đoạn log** hoặc **dòng CSV** thật.  

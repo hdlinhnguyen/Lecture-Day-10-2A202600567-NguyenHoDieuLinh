@@ -20,6 +20,7 @@ ALLOWED_DOC_IDS = frozenset(
         "sla_p1_2026",
         "it_helpdesk_faq",
         "hr_leave_policy",
+        "access_control_sop",
     }
 )
 
@@ -51,6 +52,22 @@ def _normalize_effective_date(raw: str) -> Tuple[str, str]:
         dd, mm, yyyy = m.group(1), m.group(2), m.group(3)
         return f"{yyyy}-{mm}-{dd}", ""
     return "", "invalid_effective_date_format"
+
+
+def _normalize_exported_at(raw: str) -> Tuple[str, str]:
+    """
+    Normalize exported_at date format. Converts slash '/' to dash '-',
+    checks if it fits ISO YYYY-MM-DDTHH:MM:SS format.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return "", "empty_exported_at"
+    s_clean = s.replace("/", "-")
+    if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$", s_clean):
+        return s_clean, ""
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s_clean):
+        return f"{s_clean}T00:00:00", ""
+    return "", "invalid_exported_at_format"
 
 
 def load_raw_csv(path: Path) -> List[Dict[str, str]]:
@@ -87,7 +104,7 @@ def clean_rows(
         doc_id = raw.get("doc_id", "")
         text = raw.get("chunk_text", "")
         eff_raw = raw.get("effective_date", "")
-        exported_at = raw.get("exported_at", "")
+        exported_at_raw = raw.get("exported_at", "")
 
         if doc_id not in ALLOWED_DOC_IDS:
             quarantine.append({**raw, "reason": "unknown_doc_id"})
@@ -101,6 +118,15 @@ def clean_rows(
             quarantine.append({**raw, "reason": eff_err, "effective_date_raw": eff_raw})
             continue
 
+        # Rule 4: Export date normalization and validation
+        exp_norm, exp_err = _normalize_exported_at(exported_at_raw)
+        if exp_err == "empty_exported_at":
+            quarantine.append({**raw, "reason": "missing_exported_at"})
+            continue
+        if exp_err == "invalid_exported_at_format":
+            quarantine.append({**raw, "reason": exp_err, "exported_at_raw": exported_at_raw})
+            continue
+
         if doc_id == "hr_leave_policy" and eff_norm < "2026-01-01":
             quarantine.append(
                 {
@@ -111,17 +137,52 @@ def clean_rows(
             )
             continue
 
+        # Rule 1: Quarantine stale HR policies (stale 10 days leaves)
+        if doc_id == "hr_leave_policy":
+            stale_kws = ["10 ngày phép năm", "10 ngày làm việc phép năm", "10 ngày phép"]
+            if any(kw in text for kw in stale_kws):
+                quarantine.append({
+                    **raw,
+                    "reason": "stale_hr_policy_version",
+                    "effective_date_normalized": eff_norm,
+                })
+                continue
+
         if not text:
             quarantine.append({**raw, "reason": "missing_chunk_text"})
             continue
 
-        key = _norm_text(text)
+        # Rule 2: Clean placeholder prefixes
+        fixed_text = text
+        if fixed_text.startswith("Nội dung không rõ ràng:"):
+            fixed_text = fixed_text[len("Nội dung không rõ ràng:"):].strip()
+        elif fixed_text.startswith("Nội dung không rõ ràng"):
+            fixed_text = fixed_text[len("Nội dung không rõ ràng"):].strip()
+
+        if fixed_text.startswith("!!!"):
+            fixed_text = fixed_text.lstrip("!")
+
+        # Rule 3: Normalize white spaces
+        fixed_text = " ".join(fixed_text.split())
+
+        # Rule 5: SLA context enrichment to improve retrieval of P1 escalation/stakeholder notifications
+        if doc_id == "sla_p1_2026":
+            if fixed_text.startswith("Escalation P1:"):
+                fixed_text = fixed_text.replace("Escalation P1:", "Ticket P1 Escalation:")
+            elif fixed_text.startswith("Thông báo stakeholder P1:"):
+                fixed_text = fixed_text.replace("Thông báo stakeholder P1:", "Ticket P1 Stakeholder Notification:")
+
+        # Quarantine if empty after cleaning
+        if not fixed_text:
+            quarantine.append({**raw, "reason": "missing_chunk_text"})
+            continue
+
+        key = _norm_text(fixed_text)
         if key in seen_text:
             quarantine.append({**raw, "reason": "duplicate_chunk_text"})
             continue
         seen_text.add(key)
 
-        fixed_text = text
         if apply_refund_window_fix and doc_id == "policy_refund_v4":
             if "14 ngày làm việc" in fixed_text:
                 fixed_text = fixed_text.replace(
@@ -137,7 +198,7 @@ def clean_rows(
                 "doc_id": doc_id,
                 "chunk_text": fixed_text,
                 "effective_date": eff_norm,
-                "exported_at": exported_at or "",
+                "exported_at": exp_norm,
             }
         )
 
